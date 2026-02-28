@@ -1,5 +1,9 @@
 use aws_sdk_s3::Client as S3Client;
 use aws_sdk_dynamodb::Client as DdbClient;
+
+mod s3;
+mod dynamodb;
+
 use aws_sdk_dynamodb::types::AttributeValue;
 use std::collections::HashMap;
 
@@ -8,10 +12,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let mut args = std::env::args().skip(1);
         let cmd = args.next().expect(
                 "Usage: rustawssdk <command> [...]
-Commands:
-    list-s3 <bucket>
-    describe-table <table>
-    fallback (old behavior): <bucket> [dynamodb-table-name]",
+                Commands:
+                    list-buckets
+                    list-s3 <bucket>
+                    describe-table <table>
+                    scan-table <table>         # print all items in the table (paginated)
+                    scan-table-csv <table>     # print all items as CSV (headers inferred)
+                    scan-table-tsv <table>     # print all items as TSV (headers inferred)
+                    list-tables
+                    delete-all <table>
+                    item-exists <table> <key1=value1> [key2=value2 ...]
+                    set-attr <table> <attribute> <value> <key1=value1> [key2=value2 ...]
+                    fallback (old behavior): <bucket> [dynamodb-table-name]",
         );
 
     let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
@@ -19,174 +31,91 @@ Commands:
     let ddb_client = DdbClient::new(&config);
 
     match cmd.as_str() {
+        "list-buckets" => {
+            let count = s3::list_s3_buckets(&s3_client).await?;
+            println!("\nTotal: {} bucket(s)", count);
+        }
         "list-s3" => {
             let bucket = args.next().expect("Usage: list-s3 <bucket>");
-            let count = list_s3_objects(&s3_client, &bucket).await?;
+            let count = s3::list_s3_objects(&s3_client, &bucket).await?;
             println!("\nTotal: {} object(s)", count);
         }
         "describe-table" => {
             let table = args.next().expect("Usage: describe-table <table>");
-            describe_table_schema(&ddb_client, &table).await?;
+            dynamodb::describe_table_schema(&ddb_client, &table).await?;
+        }
+        "scan-table" => {
+            let table = args.next().expect("Usage: scan-table <table>");
+            let count = dynamodb::scan_table(&ddb_client, &table).await?;
+            println!("\nTotal: {} item(s)", count);
+        }
+        "scan-table-csv" => {
+            let table = args.next().expect("Usage: scan-table-csv <table>");
+            let count = dynamodb::scan_table_csv(&ddb_client, &table).await?;
+            eprintln!("\nWrote {} item(s) as CSV", count);
+        }
+        "scan-table-tsv" => {
+            let table = args.next().expect("Usage: scan-table-tsv <table>");
+            let count = dynamodb::scan_table_tsv(&ddb_client, &table).await?;
+            eprintln!("\nWrote {} item(s) as TSV", count);
         }
         "list-tables" => {
-            list_tables(&ddb_client).await?;
+            dynamodb::list_tables(&ddb_client).await?;
         }
         "delete-all" => {
             let table = args.next().expect("Usage: delete-all <table>");
-            let deleted = delete_all_items(&ddb_client, &table).await?;
+            let deleted = dynamodb::delete_all_items(&ddb_client, &table).await?;
             println!("Deleted {} item(s)", deleted);
+        }
+        "item-exists" => {
+            let table = args.next().expect("Usage: item-exists <table> <key1=value1> [key2=value2 ...]");
+            let mut key_map: HashMap<String, AttributeValue> = HashMap::new();
+            for kv in args {
+                if let Some((k, v)) = kv.split_once('=') {
+                    key_map.insert(k.to_string(), AttributeValue::S(v.to_string()));
+                }
+            }
+            let exists = dynamodb::item_exists(&ddb_client, &table, &key_map).await?;
+            println!("{}", exists);
+        }
+        "set-attr" => {
+            // Usage: set-attr <table> <attribute> <value> <key1=value1> [key2=value2 ...]
+            let table = args.next().expect("Usage: set-attr <table> <attribute> <value> <key1=value1> [key2=value2 ...]");
+            let attr = args.next().expect("missing attribute");
+            let val = args.next().expect("missing value");
+            let mut key_map: HashMap<String, AttributeValue> = HashMap::new();
+            for kv in args {
+                if let Some((k, v)) = kv.split_once('=') {
+                    key_map.insert(k.to_string(), AttributeValue::S(v.to_string()));
+                }
+            }
+            if key_map.is_empty() {
+                eprintln!("No key provided");
+            } else {
+                // infer type: bool -> Bool, number -> N, otherwise -> S
+                let attribute_value = if val.eq_ignore_ascii_case("true") || val.eq_ignore_ascii_case("false") {
+                    AttributeValue::Bool(val.eq_ignore_ascii_case("true"))
+                } else if val.parse::<f64>().is_ok() {
+                    AttributeValue::N(val.to_string())
+                } else {
+                    AttributeValue::S(val.to_string())
+                };
+
+                dynamodb::set_item_attribute(&ddb_client, &table, &key_map, &attr, attribute_value).await?;
+                println!("OK");
+            }
         }
         _ => {
             // fallback to original behavior: first argument is bucket, optional second is table
             let bucket = cmd; // cmd was actually the bucket in this fallback
             let table_name = args.next();
-            let count = list_s3_objects(&s3_client, &bucket).await?;
+            let count = s3::list_s3_objects(&s3_client, &bucket).await?;
             println!("\nTotal: {} object(s)", count);
             if let Some(tbl) = table_name {
-                describe_table_schema(&ddb_client, &tbl).await?;
+                dynamodb::describe_table_schema(&ddb_client, &tbl).await?;
             }
         }
     }
 
     Ok(())
-}
-
-async fn describe_table_schema(
-    client: &DdbClient,
-    table: &str,
-) -> Result<(), aws_sdk_dynamodb::Error> {
-    match client.describe_table().table_name(table).send().await {
-        Ok(resp) => {
-            if let Some(t) = resp.table() {
-                println!("\nDynamoDB table: {}", table);
-                let attrs = t.attribute_definitions();
-                if !attrs.is_empty() {
-                    println!("AttributeDefinitions:");
-                    for a in attrs {
-                        let name = a.attribute_name();
-                        let typ = format!("{:?}", a.attribute_type());
-                        println!("  - name: {}, type: {}", name, typ);
-                    }
-                }
-                let keys = t.key_schema();
-                if !keys.is_empty() {
-                    println!("KeySchema:");
-                    for k in keys {
-                        let name = k.attribute_name();
-                        let key_type = format!("{:?}", k.key_type());
-                        println!("  - name: {}, key_type: {}", name, key_type);
-                    }
-                }
-            } else {
-                println!("Table {} not found or has no metadata.", table);
-            }
-            Ok(())
-        }
-        Err(e) => {
-            // Convert SdkError into the SDK Error type then inspect its message/code.
-            let sdk_err: aws_sdk_dynamodb::Error = e.into();
-            let msg = sdk_err.to_string();
-            if msg.contains("ResourceNotFoundException") {
-                println!("Table '{}' not found.", table);
-                return Ok(());
-            }
-            Err(sdk_err)
-        }
-    }
-}
-
-async fn list_s3_objects(client: &S3Client, bucket: &str) -> Result<usize, aws_sdk_s3::Error> {
-    let mut paginator = client
-        .list_objects_v2()
-        .bucket(bucket)
-        .into_paginator()
-        .send();
-
-    let mut count = 0usize;
-    while let Some(result) = paginator.next().await {
-        let page = result?;
-        let contents = page.contents();
-        if !contents.is_empty() {
-            for object in contents {
-                match object.key() {
-                    Some(k) => println!("{}", k),
-                    None => println!("(no key)"),
-                }
-                count += 1;
-            }
-        }
-    }
-
-    Ok(count)
-}
-
-async fn list_tables(client: &DdbClient) -> Result<(), aws_sdk_dynamodb::Error> {
-    let resp = client.list_tables().send().await?;
-    let names = resp.table_names();
-    if names.is_empty() {
-        println!("No DynamoDB tables found.");
-    } else {
-        println!("DynamoDB tables:");
-        for n in names {
-            println!("  {}", n);
-        }
-    }
-    Ok(())
-}
-
-async fn delete_all_items(client: &DdbClient, table: &str) -> Result<u64, aws_sdk_dynamodb::Error> {
-    // Describe table to get key schema
-    let resp = client.describe_table().table_name(table).send().await?;
-    let table_desc = match resp.table() {
-        Some(t) => t,
-        None => {
-            println!("Table '{}' not found.", table);
-            return Ok(0);
-        }
-    };
-
-    let key_schema = table_desc.key_schema();
-    if key_schema.is_empty() {
-        println!("Table '{}' has no key schema.", table);
-        return Ok(0);
-    }
-
-    let key_attrs: Vec<String> = key_schema.iter().map(|k| k.attribute_name().to_string()).collect();
-
-    let mut deleted: u64 = 0;
-    let mut paginator = client
-        .scan()
-        .table_name(table)
-        .projection_expression(&key_attrs.join(","))
-        .into_paginator()
-        .send();
-
-    while let Some(page_res) = paginator.next().await {
-        let page = page_res?;
-        let items = page.items();
-        if items.is_empty() {
-            continue;
-        }
-        for item in items {
-            let mut key_map: HashMap<String, AttributeValue> = HashMap::new();
-            for k in &key_attrs {
-                if let Some(v) = item.get(k) {
-                    key_map.insert(k.clone(), v.clone());
-                }
-            }
-            if key_map.len() == key_attrs.len() {
-                client
-                    .delete_item()
-                    .table_name(table)
-                    .set_key(Some(key_map))
-                    .send()
-                    .await?;
-                deleted += 1;
-            } else {
-                println!("Skipping item missing full key: {:?}", item);
-            }
-        }
-    }
-
-    Ok(deleted)
 }
