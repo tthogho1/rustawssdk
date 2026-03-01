@@ -105,6 +105,71 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 println!("OK");
             }
         }
+        "get-attrs" => {
+            // Usage: get-attrs <table> <attr1,attr2,...> <key1=value1> [key2=value2 ...]
+            let table = args.next().expect("Usage: get-attrs <table> <attr1,attr2,...> <key1=value1> [key2=value2 ...]");
+            let attrs_csv = args.next().expect("missing attributes");
+            let attrs: Vec<&str> = attrs_csv
+                .split(',')
+                .map(|s| s.trim())
+                .filter(|s| !s.is_empty())
+                .collect();
+            let mut key_map: HashMap<String, AttributeValue> = HashMap::new();
+            for kv in args {
+                if let Some((k, v)) = kv.split_once('=') {
+                    key_map.insert(k.to_string(), AttributeValue::S(v.to_string()));
+                }
+            }
+            // helper: render AttributeValue into a plain string
+            let av_to_str = |v: &AttributeValue| -> String {
+                if let Ok(s) = v.as_s() { return s.to_string(); }
+                if let Ok(n) = v.as_n() { return n.to_string(); }
+                if let Ok(b) = v.as_bool() { return b.to_string(); }
+                if let Ok(ss) = v.as_ss() { return ss.join(","); }
+                if let Ok(ns) = v.as_ns() { return ns.join(","); }
+                // fallback to debug if other types (M, L, B, etc.)
+                format!("{:?}", v)
+            };
+
+            if key_map.is_empty() {
+                // No key provided — scan the table and print values for each item
+                let items = dynamodb::scan_projected_attributes(&ddb_client, &table, &attrs).await?;
+                if items.is_empty() {
+                    // print nothing (user asked for only result data)
+                } else if attrs.len() == 1 {
+                    let a = attrs[0];
+                    for it in items {
+                        let out = it.get(a).map(|v| av_to_str(v)).unwrap_or_default();
+                        println!("{}", out);
+                    }
+                } else {
+                    for it in items {
+                        let row = attrs.iter()
+                            .map(|a| it.get(*a).map(|v| av_to_str(v)).unwrap_or_default())
+                            .collect::<Vec<_>>()
+                            .join("\t");
+                        println!("{}", row);
+                    }
+                }
+            } else {
+                let item = dynamodb::get_item_attributes(&ddb_client, &table, &key_map, &attrs).await?;
+                if let Some(map) = item {
+                    if attrs.len() == 1 {
+                        let a = attrs[0];
+                        let out = map.get(a).map(|v| av_to_str(v)).unwrap_or_default();
+                        println!("{}", out);
+                    } else {
+                        let row = attrs.iter()
+                            .map(|a| map.get(*a).map(|v| av_to_str(v)).unwrap_or_default())
+                            .collect::<Vec<_>>()
+                            .join("\t");
+                        println!("{}", row);
+                    }
+                } else {
+                    // print nothing when item not found (user asked for only result data)
+                }
+            }
+        }
         _ => {
             // fallback to original behavior: first argument is bucket, optional second is table
             let bucket = cmd; // cmd was actually the bucket in this fallback

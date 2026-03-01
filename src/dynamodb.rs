@@ -289,3 +289,89 @@ pub async fn set_item_attribute(
 
     Ok(())
 }
+
+pub async fn get_item_attributes(
+    client: &DdbClient,
+    table: &str,
+    key: &HashMap<String, AttributeValue>,
+    attrs: &[&str],
+) -> Result<Option<HashMap<String, AttributeValue>>, aws_sdk_dynamodb::Error> {
+    if attrs.is_empty() {
+        // If no attrs requested, just do a normal GetItem
+        let resp = client
+            .get_item()
+            .table_name(table)
+            .set_key(Some(key.clone()))
+            .send()
+            .await?;
+        return Ok(resp.item);
+    }
+
+    // build expression attribute names to avoid reserved-word issues
+    let mut expr_names: HashMap<String, String> = HashMap::new();
+    for (i, name) in attrs.iter().enumerate() {
+        expr_names.insert(format!("#a{}", i), name.to_string());
+    }
+    let proj = (0..attrs.len())
+        .map(|i| format!("#a{}", i))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let resp = client
+        .get_item()
+        .table_name(table)
+        .set_key(Some(key.clone()))
+        .set_expression_attribute_names(Some(expr_names))
+        .projection_expression(proj)
+        .send()
+        .await?;
+
+    Ok(resp.item)
+}
+
+pub async fn scan_projected_attributes(
+    client: &DdbClient,
+    table: &str,
+    attrs: &[&str],
+) -> Result<Vec<HashMap<String, AttributeValue>>, aws_sdk_dynamodb::Error> {
+    let mut items: Vec<HashMap<String, AttributeValue>> = Vec::new();
+
+    // If no attrs requested, do a full scan and return all items
+    if attrs.is_empty() {
+        let mut paginator = client.scan().table_name(table).into_paginator().send();
+        while let Some(page_res) = paginator.next().await {
+            let page = page_res?;
+            for item in page.items() {
+                items.push(item.clone());
+            }
+        }
+        return Ok(items);
+    }
+
+    // build expression attribute names to avoid reserved-word issues
+    let mut expr_names: HashMap<String, String> = HashMap::new();
+    for (i, name) in attrs.iter().enumerate() {
+        expr_names.insert(format!("#a{}", i), name.to_string());
+    }
+    let proj = (0..attrs.len())
+        .map(|i| format!("#a{}", i))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let mut paginator = client
+        .scan()
+        .table_name(table)
+        .set_expression_attribute_names(Some(expr_names))
+        .projection_expression(proj)
+        .into_paginator()
+        .send();
+
+    while let Some(page_res) = paginator.next().await {
+        let page = page_res?;
+        for item in page.items() {
+            items.push(item.clone());
+        }
+    }
+
+    Ok(items)
+}
