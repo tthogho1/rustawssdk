@@ -1,11 +1,16 @@
 use aws_sdk_s3::Client as S3Client;
 use aws_sdk_dynamodb::Client as DdbClient;
+use aws_sdk_ecs::Client as EcsClient;
+use aws_sdk_ecr::Client as EcrClient;
 
 mod s3;
 mod dynamodb;
+mod ecs;
+mod ecr;
 
 use aws_sdk_dynamodb::types::AttributeValue;
 use std::collections::HashMap;
+
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -23,17 +28,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     delete-all <table>
                     item-exists <table> <key1=value1> [key2=value2 ...]
                     set-attr <table> <attribute> <value> <key1=value1> [key2=value2 ...]
+                    list-ecs-clusters
+                    list-ecs-services <cluster>
+                    list-ecr-repos
                     fallback (old behavior): <bucket> [dynamodb-table-name]",
         );
 
     let config = aws_config::load_defaults(aws_config::BehaviorVersion::latest()).await;
     let s3_client = S3Client::new(&config);
     let ddb_client = DdbClient::new(&config);
+    let ecs_client = EcsClient::new(&config);
+    let ecr_client = EcrClient::new(&config);
 
     match cmd.as_str() {
         "list-buckets" => {
             let count = s3::list_s3_buckets(&s3_client).await?;
             println!("\nTotal: {} bucket(s)", count);
+        }
+        "list-ecs-clusters" => {
+            let count = ecs::list_ecs_clusters(&ecs_client).await?;
+            println!("\nTotal: {} cluster(s)", count);
+        }
+        "list-ecs-services" => {
+            let cluster = args.next().expect("Usage: list-ecs-services <cluster>");
+            let count = ecs::list_ecs_services(&ecs_client, &cluster).await?;
+            println!("\nTotal: {} service(s)", count);
+        }
+        "list-ecr-repos" => {
+            let count = ecr::list_ecr_repositories(&ecr_client).await?;
+            println!("\nTotal: {} repository(ies)", count);
         }
         "list-s3" => {
             let bucket = args.next().expect("Usage: list-s3 <bucket>");

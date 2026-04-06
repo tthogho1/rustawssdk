@@ -1,0 +1,12 @@
+audio4gladia
+audio4input
+audio4output
+aws-cloudtrail-logs-584802445152-cb031380
+bucket4image
+bucket4imageupload
+cf-templates-9hnji3ii5tpu-ap-northeast-1
+higma-dynamobkup
+lamdabucket4upload
+windyimage
+
+Total: 10 bucket(s)
