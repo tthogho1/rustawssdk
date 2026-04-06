@@ -1,5 +1,41 @@
 # rustawssdk
 
+Small CLI utilities using the AWS Rust SDK for quick inspections and operations.
+
+New commands added:
+
+- `list-ecs-clusters` — list ECS cluster ARNs in the current account/region.
+- `list-ecs-services <cluster>` — list service ARNs for the given ECS cluster (cluster name or ARN).
+- `list-ecr-repos` — list ECR repositories (name and URI).
+
+Build & run
+
+Install Rust toolchain and run:
+
+```bash
+cargo build
+cargo run -- <command> [args]
+# examples
+cargo run -- list-ecs-clusters
+cargo run -- list-ecs-services my-cluster
+cargo run -- list-ecr-repos
+```
+
+AWS credentials
+
+The CLI uses the default AWS SDK configuration chain. Ensure credentials and region are available via environment variables, shared config/profile, or instance/role providers. Example:
+
+```bash
+export AWS_PROFILE=default
+export AWS_REGION=us-east-1
+```
+
+Notes
+
+- Commands print one result per line and a final summary count.
+- This repo depends on aws-config and a few AWS service crates; see `Cargo.toml` for details.
+# rustawssdk
+
 Small CLI utilities using AWS SDK for Rust — S3 + DynamoDB helpers.
 
 ## Build
