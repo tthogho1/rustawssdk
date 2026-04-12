@@ -2,11 +2,13 @@ use aws_sdk_s3::Client as S3Client;
 use aws_sdk_dynamodb::Client as DdbClient;
 use aws_sdk_ecs::Client as EcsClient;
 use aws_sdk_ecr::Client as EcrClient;
+use aws_sdk_ec2::Client as Ec2Client;
 
 mod s3;
 mod dynamodb;
 mod ecs;
 mod ecr;
+mod securitygroup;
 
 use aws_sdk_dynamodb::types::AttributeValue;
 use std::collections::HashMap;
@@ -30,6 +32,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     set-attr <table> <attribute> <value> <key1=value1> [key2=value2 ...]
                     list-ecs-clusters
                     list-ecs-services <cluster>
+                    list-security-groups
+                    show-security-group <group-id>
+                    create-security-group <name> <description> [vpc-id]
+                    delete-security-group <group-id>
                     list-ecr-repos
                     fallback (old behavior): <bucket> [dynamodb-table-name]",
         );
@@ -39,6 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ddb_client = DdbClient::new(&config);
     let ecs_client = EcsClient::new(&config);
     let ecr_client = EcrClient::new(&config);
+    let ec2_client = Ec2Client::new(&config);
 
     match cmd.as_str() {
         "list-buckets" => {
@@ -54,9 +61,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let count = ecs::list_ecs_services(&ecs_client, &cluster).await?;
             println!("\nTotal: {} service(s)", count);
         }
+        "list-ecs-tasks" => {
+            let cluster = args.next().expect("Usage: list-ecs-tasks <cluster>");
+            let count = ecs::list_ecs_tasks(&ecs_client, &cluster).await?;
+            println!("\nTotal: {} task(s)", count);
+        }
         "list-ecr-repos" => {
             let count = ecr::list_ecr_repositories(&ecr_client).await?;
             println!("\nTotal: {} repository(ies)", count);
+        }
+        "list-security-groups" => {
+            let count = securitygroup::list_security_groups(&ec2_client).await?;
+            println!("\nTotal: {} security group(s)", count);
+        }
+        "create-security-group" => {
+            let name = args.next().expect("Usage: create-security-group <name> <description> [vpc-id]");
+            let description = args.next().expect("Usage: create-security-group <name> <description> [vpc-id]");
+            let vpc_id = args.next();
+            let group_id = securitygroup::create_security_group(
+                &ec2_client,
+                &name,
+                &description,
+                vpc_id.as_deref(),
+            ).await?;
+            println!("Security Group ID: {}", group_id);
+        }
+        "delete-security-group" => {
+            let group_id = args.next().expect("Usage: delete-security-group <group-id>");
+            securitygroup::delete_security_group(&ec2_client, &group_id).await?;
+            println!("Deleted security group: {}", group_id);
+        }
+        "show-security-group" => {
+            let group_id = args.next().expect("Usage: show-security-group <group-id>");
+            securitygroup::show_security_group_ingress(&ec2_client, &group_id).await?;
         }
         "list-s3" => {
             let bucket = args.next().expect("Usage: list-s3 <bucket>");

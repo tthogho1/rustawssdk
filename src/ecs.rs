@@ -43,3 +43,26 @@ pub async fn list_ecs_services(client: &EcsClient, cluster: &str) -> Result<usiz
     Ok(count)
 }
 
+pub async fn list_ecs_tasks(client: &EcsClient, cluster: &str) -> Result<usize, aws_sdk_ecs::Error> {
+    let mut paginator = client
+        .list_tasks()
+        .cluster(cluster)
+        .into_paginator()
+        .send();
+
+    let mut count = 0usize;
+    while let Some(page_res) = paginator.next().await {
+        let page = page_res?;
+        let arns = page.task_arns();
+        if arns.is_empty() {
+            continue;
+        }
+        for arn in arns {
+            println!("{}", arn);
+            count += 1;
+        }
+    }
+
+    Ok(count)
+}
+
