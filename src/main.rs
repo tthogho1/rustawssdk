@@ -3,12 +3,14 @@ use aws_sdk_dynamodb::Client as DdbClient;
 use aws_sdk_ecs::Client as EcsClient;
 use aws_sdk_ecr::Client as EcrClient;
 use aws_sdk_ec2::Client as Ec2Client;
+use aws_sdk_batch::Client as BatchClient;
 
 mod s3;
 mod dynamodb;
 mod ecs;
 mod ecr;
 mod securitygroup;
+mod awsbatch;
 
 use aws_sdk_dynamodb::types::AttributeValue;
 use std::collections::HashMap;
@@ -37,6 +39,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     create-security-group <name> <description> [vpc-id]
                     delete-security-group <group-id>
                     list-ecr-repos
+                    list-compute-envs
+                    list-job-queues
+                    list-job-defs
+                    create-compute-env <name> <max-vcpus> <subnets,comma-sep> <sgs,comma-sep> <service-role-arn>
+                    create-job-queue <name> <compute-env-arn-or-name> <priority>
+                    register-job-def <name> <ecr-image-uri> <vcpus> <memory-mib> <exec-role-arn> <log-group> <log-region> <log-prefix>
+                    submit-job <job-name> <job-queue> <job-definition>
+                    describe-job <job-id>
                     fallback (old behavior): <bucket> [dynamodb-table-name]",
         );
 
@@ -46,6 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ecs_client = EcsClient::new(&config);
     let ecr_client = EcrClient::new(&config);
     let ec2_client = Ec2Client::new(&config);
+    let batch_client = BatchClient::new(&config);
 
     match cmd.as_str() {
         "list-buckets" => {
@@ -229,6 +240,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     // print nothing when item not found (user asked for only result data)
                 }
             }
+        }
+        "list-compute-envs" => {
+            let count = awsbatch::list_compute_environments(&batch_client).await?;
+            println!("\nTotal: {} compute environment(s)", count);
+        }
+        "list-job-queues" => {
+            let count = awsbatch::list_job_queues(&batch_client).await?;
+            println!("\nTotal: {} job queue(s)", count);
+        }
+        "list-job-defs" => {
+            let count = awsbatch::list_job_definitions(&batch_client).await?;
+            println!("\nTotal: {} job definition(s)", count);
+        }
+        "create-compute-env" => {
+            let name = args.next().expect("Usage: create-compute-env <name> <max-vcpus> <subnets,comma-sep> <sgs,comma-sep> <service-role-arn>");
+            let max_vcpus: i32 = args.next().expect("missing max-vcpus").parse().expect("max-vcpus must be an integer");
+            let subnets: Vec<String> = args.next().expect("missing subnets").split(',').map(|s| s.to_string()).collect();
+            let sgs: Vec<String> = args.next().expect("missing security-group-ids").split(',').map(|s| s.to_string()).collect();
+            let service_role = args.next().expect("missing service-role-arn");
+            awsbatch::create_managed_fargate_compute_environment(&batch_client, &name, max_vcpus, subnets, sgs, &service_role).await?;
+        }
+        "create-job-queue" => {
+            let name = args.next().expect("Usage: create-job-queue <name> <compute-env> <priority>");
+            let compute_env = args.next().expect("missing compute-env");
+            let priority: i32 = args.next().expect("missing priority").parse().expect("priority must be an integer");
+            awsbatch::create_job_queue(&batch_client, &name, &compute_env, priority).await?;
+        }
+        "register-job-def" => {
+            let name = args.next().expect("Usage: register-job-def <name> <ecr-image-uri> <vcpus> <memory-mib> <exec-role-arn> <log-group> <log-region> <log-prefix>");
+            let image = args.next().expect("missing ecr-image-uri");
+            let vcpus = args.next().expect("missing vcpus");
+            let memory = args.next().expect("missing memory-mib");
+            let exec_role = args.next().expect("missing exec-role-arn");
+            let log_group = args.next().expect("missing log-group");
+            let log_region = args.next().expect("missing log-region");
+            let log_prefix = args.next().expect("missing log-prefix");
+            awsbatch::register_fargate_job_definition(&batch_client, &name, &image, &vcpus, &memory, &exec_role, &log_group, &log_region, &log_prefix).await?;
+        }
+        "submit-job" => {
+            let job_name = args.next().expect("Usage: submit-job <job-name> <job-queue> <job-definition>");
+            let job_queue = args.next().expect("missing job-queue");
+            let job_def = args.next().expect("missing job-definition");
+            awsbatch::submit_job(&batch_client, &job_name, &job_queue, &job_def).await?;
+        }
+        "describe-job" => {
+            let job_id = args.next().expect("Usage: describe-job <job-id>");
+            awsbatch::describe_job(&batch_client, &job_id).await?;
         }
         _ => {
             // fallback to original behavior: first argument is bucket, optional second is table
