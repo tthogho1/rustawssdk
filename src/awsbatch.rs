@@ -54,6 +54,70 @@ pub async fn list_job_definitions(client: &BatchClient) -> Result<usize, aws_sdk
     Ok(defs.len())
 }
 
+/// Delete a compute environment by name or ARN.
+/// Disables first, polls until the status is no longer UPDATING, then deletes.
+pub async fn delete_compute_environment(
+    client: &BatchClient,
+    name: &str,
+) -> Result<(), aws_sdk_batch::Error> {
+    // Disable first (required before deletion)
+    client
+        .update_compute_environment()
+        .compute_environment(name)
+        .state(aws_sdk_batch::types::CeState::Disabled)
+        .send()
+        .await?;
+    eprintln!("Disabled compute environment '{}', waiting for state change...", name);
+
+    // Poll until the CE is no longer UPDATING (max ~120s)
+    for _ in 0..24 {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        let resp = client
+            .describe_compute_environments()
+            .compute_environments(name)
+            .send()
+            .await?;
+        if let Some(env) = resp.compute_environments().first() {
+            let status = env.status().map(|s| s.as_str()).unwrap_or("-");
+            eprintln!("  status: {}", status);
+            if status != "UPDATING" {
+                break;
+            }
+        } else {
+            // Already gone
+            println!("Compute environment '{}' not found (already deleted?)", name);
+            return Ok(());
+        }
+    }
+
+    client
+        .delete_compute_environment()
+        .compute_environment(name)
+        .send()
+        .await?;
+    eprintln!("Delete API call succeeded, waiting for CE to fully disappear...");
+
+    // Poll until the CE is gone from describe (max ~120s)
+    for _ in 0..24 {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        let resp = client
+            .describe_compute_environments()
+            .compute_environments(name)
+            .send()
+            .await?;
+        if resp.compute_environments().is_empty() {
+            println!("Deleted compute environment: {}", name);
+            return Ok(());
+        }
+        let status = resp.compute_environments().first()
+            .and_then(|e| e.status().map(|s| s.as_str()))
+            .unwrap_or("-");
+        eprintln!("  still visible (status: {})", status);
+    }
+    println!("Delete issued for '{}' — CE may still take a moment to fully disappear.", name);
+    Ok(())
+}
+
 /// Create a MANAGED Fargate compute environment.
 /// subnets and security_group_ids are comma-separated strings split by the caller.
 pub async fn create_managed_fargate_compute_environment(
@@ -62,7 +126,7 @@ pub async fn create_managed_fargate_compute_environment(
     max_vcpus: i32,
     subnets: Vec<String>,
     security_group_ids: Vec<String>,
-    service_role: &str,
+    service_role: Option<&str>,
 ) -> Result<(), aws_sdk_batch::Error> {
     let compute_resource = ComputeResource::builder()
         .r#type(CrType::Fargate)
@@ -71,14 +135,15 @@ pub async fn create_managed_fargate_compute_environment(
         .set_security_group_ids(Some(security_group_ids))
         .build();
 
-    let resp = client
+    let mut req = client
         .create_compute_environment()
         .compute_environment_name(name)
         .r#type(CeType::Managed)
-        .service_role(service_role)
-        .compute_resources(compute_resource)
-        .send()
-        .await?;
+        .compute_resources(compute_resource);
+    if let Some(role) = service_role {
+        req = req.service_role(role);
+    }
+    let resp = req.send().await?;
 
     println!(
         "Created compute environment: {}",
@@ -237,4 +302,42 @@ pub async fn describe_job(
         }
     }
     Ok(())
+}
+
+/// Poll a compute environment until its status becomes VALID (or timeout).
+/// Returns Ok(true) if VALID, Ok(false) if timed out, Err on API error.
+pub async fn wait_compute_env_valid(
+    client: &BatchClient,
+    name: &str,
+    timeout_secs: u64,
+    poll_interval_secs: u64,
+) -> Result<bool, aws_sdk_batch::Error> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+    loop {
+        let resp = client
+            .describe_compute_environments()
+            .compute_environments(name)
+            .send()
+            .await?;
+        let envs = resp.compute_environments();
+        if let Some(env) = envs.first() {
+            let status = env.status().map(|s| s.as_str()).unwrap_or("-");
+            eprintln!("Compute environment '{}' status: {}", name, status);
+            if status == "VALID" {
+                return Ok(true);
+            }
+            if status == "INVALID" {
+                eprintln!("Compute environment '{}' became INVALID", name);
+                return Ok(false);
+            }
+        } else {
+            eprintln!("Compute environment '{}' not found", name);
+            return Ok(false);
+        }
+        if std::time::Instant::now() >= deadline {
+            eprintln!("Timed out waiting for compute environment '{}' to become VALID", name);
+            return Ok(false);
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(poll_interval_secs)).await;
+    }
 }

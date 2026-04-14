@@ -1,4 +1,5 @@
 use aws_sdk_ec2::Client as Ec2Client;
+use aws_sdk_ec2::types::{IpPermission, IpRange};
 
 pub async fn list_security_groups(client: &Ec2Client) -> Result<usize, aws_sdk_ec2::Error> {
     let resp = client.describe_security_groups().send().await?;
@@ -103,5 +104,35 @@ pub async fn show_security_group_ingress(
         }
     }
 
+    Ok(())
+}
+
+/// Authorize a simple IPv4 ingress rule on the given security group.
+/// `protocol` examples: "tcp", "udp", "-1" (all).
+pub async fn authorize_ingress(
+    client: &Ec2Client,
+    group_id: &str,
+    cidr: &str,
+    protocol: &str,
+    from_port: i32,
+    to_port: i32,
+) -> Result<(), aws_sdk_ec2::Error> {
+    let ip_range = IpRange::builder().cidr_ip(cidr).build();
+
+    let perm = IpPermission::builder()
+        .ip_protocol(protocol)
+        .from_port(from_port)
+        .to_port(to_port)
+        .set_ip_ranges(Some(vec![ip_range]))
+        .build();
+
+    client
+        .authorize_security_group_ingress()
+        .group_id(group_id)
+        .ip_permissions(perm)
+        .send()
+        .await?;
+
+    println!("Authorized ingress {} {} {}-{} on {}", protocol, cidr, from_port, to_port, group_id);
     Ok(())
 }

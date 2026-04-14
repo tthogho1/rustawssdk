@@ -1,3 +1,6 @@
 /target
 
 CLAUDE.md
+
+# Ignore shell scripts to avoid accidental pushes
+*.sh

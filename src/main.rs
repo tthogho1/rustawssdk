@@ -11,6 +11,8 @@ mod ecs;
 mod ecr;
 mod securitygroup;
 mod awsbatch;
+mod vpc;
+mod subnet;
 
 use aws_sdk_dynamodb::types::AttributeValue;
 use std::collections::HashMap;
@@ -35,6 +37,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     list-ecs-clusters
                     list-ecs-services <cluster>
                     list-security-groups
+                        list-vpcs
+                        create-vpc <cidr-block>
+                    list-subnets
+                    create-subnet <vpc-id> <cidr-block> [availability-zone]
                     show-security-group <group-id>
                     create-security-group <name> <description> [vpc-id]
                     delete-security-group <group-id>
@@ -42,7 +48,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     list-compute-envs
                     list-job-queues
                     list-job-defs
-                    create-compute-env <name> <max-vcpus> <subnets,comma-sep> <sgs,comma-sep> <service-role-arn>
+                    wait-compute-env <name> [timeout-secs] [poll-interval-secs]
+                    delete-compute-env <name>
+                    create-compute-env <name> <max-vcpus> <subnets,comma-sep> <sgs,comma-sep> [service-role-arn]
                     create-job-queue <name> <compute-env-arn-or-name> <priority>
                     register-job-def <name> <ecr-image-uri> <vcpus> <memory-mib> <exec-role-arn> <log-group> <log-region> <log-prefix>
                     submit-job <job-name> <job-queue> <job-definition>
@@ -84,6 +92,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "list-security-groups" => {
             let count = securitygroup::list_security_groups(&ec2_client).await?;
             println!("\nTotal: {} security group(s)", count);
+        }
+        "list-vpcs" => {
+            let count = vpc::list_vpcs(&ec2_client).await?;
+            println!("\nTotal: {} vpc(s)", count);
+        }
+        "create-vpc" => {
+            let cidr = args.next().expect("Usage: create-vpc <cidr-block>");
+            let maybe_id = vpc::create_vpc(&ec2_client, &cidr).await?;
+            if let Some(id) = maybe_id {
+                println!("VPC ID: {}", id);
+            } else {
+                eprintln!("Create VPC returned no VPC id");
+            }
+        }
+        "list-subnets" => {
+            let count = subnet::list_subnets(&ec2_client).await?;
+            println!("\nTotal: {} subnet(s)", count);
+        }
+        "create-subnet" => {
+            let vpc_id = args.next().expect("Usage: create-subnet <vpc-id> <cidr-block> [availability-zone]");
+            let cidr = args.next().expect("missing cidr-block");
+            let az = args.next();
+            let maybe_id = subnet::create_subnet(&ec2_client, &vpc_id, &cidr, az.as_deref()).await?;
+            if let Some(id) = maybe_id {
+                println!("Subnet ID: {}", id);
+            } else {
+                eprintln!("Create Subnet returned no subnet id");
+            }
         }
         "create-security-group" => {
             let name = args.next().expect("Usage: create-security-group <name> <description> [vpc-id]");
@@ -253,13 +289,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let count = awsbatch::list_job_definitions(&batch_client).await?;
             println!("\nTotal: {} job definition(s)", count);
         }
+        "delete-compute-env" => {
+            let name = args.next().expect("Usage: delete-compute-env <name>");
+            awsbatch::delete_compute_environment(&batch_client, &name).await?;
+        }
+        "wait-compute-env" => {
+            let name = args.next().expect("Usage: wait-compute-env <name> [timeout-secs] [poll-interval-secs]");
+            let timeout: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(120);
+            let interval: u64 = args.next().and_then(|s| s.parse().ok()).unwrap_or(5);
+            let valid = awsbatch::wait_compute_env_valid(&batch_client, &name, timeout, interval).await?;
+            if valid {
+                println!("Compute environment '{}' is VALID", name);
+            } else {
+                eprintln!("Compute environment '{}' did not become VALID", name);
+                std::process::exit(1);
+            }
+        }
         "create-compute-env" => {
-            let name = args.next().expect("Usage: create-compute-env <name> <max-vcpus> <subnets,comma-sep> <sgs,comma-sep> <service-role-arn>");
+            let name = args.next().expect("Usage: create-compute-env <name> <max-vcpus> <subnets,comma-sep> <sgs,comma-sep> [service-role-arn]");
             let max_vcpus: i32 = args.next().expect("missing max-vcpus").parse().expect("max-vcpus must be an integer");
             let subnets: Vec<String> = args.next().expect("missing subnets").split(',').map(|s| s.to_string()).collect();
             let sgs: Vec<String> = args.next().expect("missing security-group-ids").split(',').map(|s| s.to_string()).collect();
-            let service_role = args.next().expect("missing service-role-arn");
-            awsbatch::create_managed_fargate_compute_environment(&batch_client, &name, max_vcpus, subnets, sgs, &service_role).await?;
+            let service_role = args.next();
+            awsbatch::create_managed_fargate_compute_environment(&batch_client, &name, max_vcpus, subnets, sgs, service_role.as_deref()).await?;
         }
         "create-job-queue" => {
             let name = args.next().expect("Usage: create-job-queue <name> <compute-env> <priority>");

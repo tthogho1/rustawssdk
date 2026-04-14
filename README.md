@@ -18,25 +18,19 @@ cargo run -- <command> [args]
 # examples
 cargo run -- list-ecs-clusters
 cargo run -- list-ecs-services my-cluster
-cargo run -- list-ecr-repos
-```
-
-AWS credentials
-
-The CLI uses the default AWS SDK configuration chain. Ensure credentials and region are available via environment variables, shared config/profile, or instance/role providers. Example:
-
-```bash
-export AWS_PROFILE=default
-export AWS_REGION=us-east-1
-```
-
-Notes
-
-- Commands print one result per line and a final summary count.
-- This repo depends on aws-config and a few AWS service crates; see `Cargo.toml` for details.
 # rustawssdk
 
-Small CLI utilities using AWS SDK for Rust — S3 + DynamoDB helpers.
+Small CLI utilities built on the AWS SDK for Rust. This repository provides a compact command-line tool and helper scripts to inspect and operate on common AWS resources (S3, DynamoDB, ECS, ECR, etc.).
+
+## Overview
+
+- Single binary `rustawssdk` exposing multiple subcommands for quick, script-friendly operations.
+- Intended for tooling, ad-hoc inspection, and automation helpers (not a full-featured production product).
+
+## Prerequisites
+
+- Rust toolchain (rustup + cargo)
+- AWS credentials accessible via the standard SDK configuration chain (environment variables, `~/.aws/credentials`, or instance role).
 
 ## Build
 
@@ -44,44 +38,43 @@ From the project root:
 
 ```bash
 cargo build
-# or release build
+# for an optimized binary
 cargo build --release
 ```
 
-## Executable
+The produced binaries are at `target/debug/rustawssdk` and `target/release/rustawssdk`.
 
-- Debug binary: `target/debug/rustawssdk`
-- Release binary: `target/release/rustawssdk`
+You can also run commands directly with `cargo run -- <command> [args]`.
 
-You can also run via `cargo run -- <command> ...`.
+## Usage
 
-## Commands
-
-Usage:
+General form:
 
 ```text
-rustawssdk <command> [...]
+rustawssdk <command> [args]
 ```
 
-Supported commands (selected):
+Selected commands (see the source for the full list):
 
 - `list-buckets` — list all S3 buckets
 - `list-s3 <bucket>` — list objects in an S3 bucket
-- `describe-table <table>` — print DynamoDB table schema
 - `list-tables` — list DynamoDB tables
+- `describe-table <table>` — print DynamoDB table schema
 - `scan-table <table>` — print all items in a DynamoDB table
-- `scan-table-csv <table>` — print table items as CSV
-- `scan-table-tsv <table>` — print table items as TSV
+- `scan-table-csv <table>` / `scan-table-tsv <table>` — CSV/TSV exports of table items
 - `item-exists <table> <key1=value1> [key2=value2 ...]` — check whether an item exists
-- `set-attr <table> <attribute> <value> <key1=value1> ...` — set a single attribute on an item
+- `set-attr <table> <attribute> <value> <key1=value1> ...` — set one attribute on an item (value infers numbers/booleans)
+- `list-ecs-clusters` — list ECS cluster ARNs
+- `list-ecs-services <cluster>` — list ECS services for a cluster
+- `list-ecr-repos` — list ECR repositories (name and URI)
 
-Examples:
+### Examples
 
 ```bash
-# describe a table
+# describe a DynamoDB table
 cargo run -- describe-table YoutubeList
 
-# check item exists (string key)
+# check whether an item exists
 cargo run -- item-exists YoutubeList video_id=abcd1234
 
 # set numeric attribute 'transcribed' to 1
@@ -91,20 +84,29 @@ cargo run -- set-attr YoutubeList transcribed 1 video_id=abcd1234
 cargo run -- list-buckets
 ```
 
-Notes:
+## AWS credentials & region
 
-- The CLI parses keys and values as strings by default; `set-attr` now infers booleans and numbers for the attribute `value` argument (e.g. `1` -> number).
-- AWS credentials and region are provided via the usual environment variables or `~/.aws/` config (e.g. `AWS_PROFILE`, `AWS_REGION`).
+The CLI uses the AWS SDK's default provider chain. Ensure your environment has credentials and region set, for example:
 
-## Helpers
+```bash
+export AWS_PROFILE=default
+export AWS_REGION=us-east-1
+```
 
-- `check_prefixes.sh` — simple script that reads `prefixes.txt` and runs `item-exists` for each `video_id` (skip blank lines and lines starting with `#`).
+## Helper scripts
+
+- `check_prefixes.sh` — iterates `prefixes.txt` and uses `item-exists` to check `video_id` entries.
+- `check_mp4s.sh`, `update_transcribed.sh`, and other scripts are included for common workflows — read each script header for usage.
 
 ## Development
 
-- Requires Rust (rustup + cargo)
-- `cargo build` then run commands with `cargo run -- <command>`
+- Use `cargo build` / `cargo run` as shown above.
+- See `Cargo.toml` for crate dependencies (aws-config, aws-service crates, etc.).
+
+## Contributing
+
+Contributions are welcome. Open issues or pull requests for feature requests, bug fixes, or documentation improvements.
 
 ## License
 
-MIT-style (add your license if desired).
+MIT-style (no license file included in the repository). Add a `LICENSE` file if you need an explicit grant.
