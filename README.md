@@ -8,6 +8,8 @@ New commands added:
 - `list-ecs-services <cluster>` — list service ARNs for the given ECS cluster (cluster name or ARN).
 - `list-ecr-repos` — list ECR repositories (name and URI).
 
+- `create-bucket <bucket> [region]` — create an S3 bucket; optional `region` sets a LocationConstraint for the bucket.
+
 New IAM user removal commands:
 
 - `delete-user <user>` — best-effort remove resources attached to the specified IAM user, then delete the user.

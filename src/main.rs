@@ -153,6 +153,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let count = s3::list_s3_objects(&s3_client, &bucket).await?;
             println!("\nTotal: {} object(s)", count);
         }
+        "create-bucket" => {
+            let bucket = args.next().expect("Usage: create-bucket <bucket> [region]");
+            let region = args.next();
+            s3::create_s3_bucket(&s3_client, &bucket, region.as_deref()).await?;
+        }
         "describe-table" => {
             let table = args.next().expect("Usage: describe-table <table>");
             dynamodb::describe_table_schema(&ddb_client, &table).await?;
