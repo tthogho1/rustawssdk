@@ -8,6 +8,11 @@ New commands added:
 - `list-ecs-services <cluster>` — list service ARNs for the given ECS cluster (cluster name or ARN).
 - `list-ecr-repos` — list ECR repositories (name and URI).
 
+New IAM user removal commands:
+
+- `delete-user <user>` — best-effort remove resources attached to the specified IAM user, then delete the user.
+- `delete-users <user1> [user2 ...]` — delete multiple users sequentially; prints a summary of successes/failures.
+
 Build & run
 
 Install Rust toolchain and run:
@@ -82,6 +87,12 @@ cargo run -- set-attr YoutubeList transcribed 1 video_id=abcd1234
 
 # list S3 buckets
 cargo run -- list-buckets
+
+# delete a single IAM user (destructive — verify credentials and target carefully)
+cargo run -- delete-user alice
+
+# delete multiple IAM users
+cargo run -- delete-users userA userB
 ```
 
 ## AWS credentials & region
@@ -92,6 +103,8 @@ The CLI uses the AWS SDK's default provider chain. Ensure your environment has c
 export AWS_PROFILE=default
 export AWS_REGION=us-east-1
 ```
+
+Important: `delete-user` performs destructive operations. It attempts to remove common resources that block `DeleteUser` (login profile, access keys, signing certificates, SSH public keys, service-specific credentials, MFA devices, inline & managed policies, and group memberships). The command is best-effort and will log errors for individual cleanup steps; verify results in the AWS console or via `aws iam` before running in production.
 
 ## Helper scripts
 

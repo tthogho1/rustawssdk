@@ -4,6 +4,7 @@ use aws_sdk_ecs::Client as EcsClient;
 use aws_sdk_ecr::Client as EcrClient;
 use aws_sdk_ec2::Client as Ec2Client;
 use aws_sdk_batch::Client as BatchClient;
+use aws_sdk_iam::Client as IamClient;
 
 mod s3;
 mod dynamodb;
@@ -13,6 +14,8 @@ mod securitygroup;
 mod awsbatch;
 mod vpc;
 mod subnet;
+mod iam;
+mod user;
 
 use aws_sdk_dynamodb::types::AttributeValue;
 use std::collections::HashMap;
@@ -55,6 +58,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     register-job-def <name> <ecr-image-uri> <vcpus> <memory-mib> <exec-role-arn> <log-group> <log-region> <log-prefix>
                     submit-job <job-name> <job-queue> <job-definition>
                     describe-job <job-id>
+                    get-role <role-name>
+                    list-role-policies <role-name>
                     fallback (old behavior): <bucket> [dynamodb-table-name]",
         );
 
@@ -65,6 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ecr_client = EcrClient::new(&config);
     let ec2_client = Ec2Client::new(&config);
     let batch_client = BatchClient::new(&config);
+    let iam_client = IamClient::new(&config);
 
     match cmd.as_str() {
         "list-buckets" => {
@@ -339,6 +345,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "describe-job" => {
             let job_id = args.next().expect("Usage: describe-job <job-id>");
             awsbatch::describe_job(&batch_client, &job_id).await?;
+        }
+        "get-role" => {
+            let role_name = args.next().expect("Usage: get-role <role-name>");
+            iam::get_role(&iam_client, &role_name).await?;
+        }
+        "delete-user" => {
+            let user_name = args.next().expect("Usage: delete-user <user-name>");
+            // best-effort remove resources then delete the user
+            user::delete_user(&iam_client, &user_name).await?;
+            println!("delete-user: requested removal of '{}'", user_name);
+        }
+        "delete-users" => {
+            // collect remaining args as usernames
+            let users: Vec<String> = args.collect();
+            if users.is_empty() {
+                eprintln!("Usage: delete-users <user1> [user2 ...]");
+            } else {
+                let mut deleted = 0usize;
+                let mut failed: Vec<String> = Vec::new();
+                for u in users {
+                    match user::delete_user(&iam_client, &u).await {
+                        Ok(_) => {
+                            println!("Deleted user: {}", u);
+                            deleted += 1;
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to delete {}: {}", u, e);
+                            failed.push(u);
+                        }
+                    }
+                }
+                println!("Summary: deleted={}, failed={}", deleted, failed.len());
+                if !failed.is_empty() {
+                    eprintln!("Failed users: {:?}", failed);
+                }
+            }
+        }
+        "list-role-policies" => {
+            let role_name = args.next().expect("Usage: list-role-policies <role-name>");
+            let count = iam::list_attached_role_policies(&iam_client, &role_name).await?;
+            println!("\nTotal: {} attached policy(ies)", count);
         }
         _ => {
             // fallback to original behavior: first argument is bucket, optional second is table
