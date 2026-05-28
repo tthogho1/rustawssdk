@@ -5,6 +5,9 @@ use aws_sdk_ecr::Client as EcrClient;
 use aws_sdk_ec2::Client as Ec2Client;
 use aws_sdk_batch::Client as BatchClient;
 use aws_sdk_iam::Client as IamClient;
+use aws_sdk_organizations::Client as OrgClient;
+use aws_sdk_ssoadmin::Client as SsoAdminClient;
+use aws_sdk_identitystore::Client as IdentityStoreClient;
 
 mod s3;
 mod dynamodb;
@@ -16,6 +19,9 @@ mod vpc;
 mod subnet;
 mod iam;
 mod user;
+mod policy;
+mod identitycenter;
+mod ou;
 
 use aws_sdk_dynamodb::types::AttributeValue;
 use std::collections::HashMap;
@@ -60,6 +66,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     describe-job <job-id>
                     get-role <role-name>
                     list-role-policies <role-name>
+                    list-ous
+                    delete-ou <ou-id>
+                    delete-ou-dry-run <ou-id>
+                    list-permission-sets <instance-arn>
+                    list-identity-store-users <identity-store-id>
                     fallback (old behavior): <bucket> [dynamodb-table-name]",
         );
 
@@ -71,6 +82,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let ec2_client = Ec2Client::new(&config);
     let batch_client = BatchClient::new(&config);
     let iam_client = IamClient::new(&config);
+    let org_client = OrgClient::new(&config);
+    let sso_admin_client = SsoAdminClient::new(&config);
+    let identity_store_client = IdentityStoreClient::new(&config);
 
     match cmd.as_str() {
         "list-buckets" => {
@@ -156,7 +170,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "create-bucket" => {
             let bucket = args.next().expect("Usage: create-bucket <bucket> [region]");
             let region = args.next();
-            s3::create_s3_bucket(&s3_client, &bucket, region.as_deref()).await?;
+            // if region not provided, fall back to SDK-configured region (if any)
+            let region_arg = region.as_deref().or_else(|| config.region().map(|r| r.as_ref()));
+            s3::create_s3_bucket(&s3_client, &bucket, region_arg).await?;
         }
         "describe-table" => {
             let table = args.next().expect("Usage: describe-table <table>");
@@ -387,10 +403,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 }
             }
         }
+        "delete-policy" => {
+            let policy_arn = args.next().expect("Usage: delete-policy <policy-arn>");
+            // best-effort: detach, remove versions, then delete
+            match policy::delete_policy(&iam_client, &policy_arn).await {
+                Ok(_) => println!("Requested deletion of policy {}", policy_arn),
+                Err(e) => eprintln!("delete-policy failed: {}", e),
+            }
+        }
         "list-role-policies" => {
             let role_name = args.next().expect("Usage: list-role-policies <role-name>");
             let count = iam::list_attached_role_policies(&iam_client, &role_name).await?;
             println!("\nTotal: {} attached policy(ies)", count);
+        }
+        "list-ous" => {
+            let count = ou::list_ous(&org_client).await?;
+            println!("\nTotal: {} OU(s)", count);
+        }
+        "delete-ou" => {
+            let ou_id_or_name = args.next().expect("Usage: delete-ou <ou-id-or-name>");
+            let ou_id = ou::resolve_ou_id(&org_client, &ou_id_or_name).await?;
+            println!("Resolved OU: {}", ou_id);
+            ou::delete_ou_recursive(&org_client, &ou_id, false).await?;
+            println!("Deleted OU and all contained accounts/OUs: {}", ou_id);
+        }
+        "delete-ou-dry-run" => {
+            let ou_id_or_name = args.next().expect("Usage: delete-ou-dry-run <ou-id-or-name>");
+            let ou_id = ou::resolve_ou_id(&org_client, &ou_id_or_name).await?;
+            println!("Resolved OU: {}", ou_id);
+            ou::delete_ou_recursive(&org_client, &ou_id, true).await?;
+            println!("[dry-run] Finished traversal of OU: {}", ou_id);
+        }
+        "list-identity-store-users" => {
+            let identity_store_id = args.next().expect("Usage: list-identity-store-users <identity-store-id>");
+            match identitycenter::list_users(&identity_store_client, &identity_store_id).await {
+                Ok(users) => {
+                    for (user_id, user_name, display_name) in &users {
+                        println!("ID: {}  UserName: {}  DisplayName: {}", user_id, user_name, display_name);
+                    }
+                    println!("\nTotal: {} user(s)", users.len());
+                }
+                Err(e) => eprintln!("list-identity-store-users failed: {}", e),
+            }
+        }
+        "list-permission-sets" => {
+            let instance_arn = args.next().expect("Usage: list-permission-sets <instance-arn>");
+            match identitycenter::list_permission_sets(&sso_admin_client, &instance_arn).await {
+                Ok(arns) => {
+                    for arn in &arns {
+                        println!("{}", arn);
+                    }
+                    println!("\nTotal: {} permission set(s)", arns.len());
+                }
+                Err(e) => eprintln!("list-permission-sets failed: {}", e),
+            }
         }
         _ => {
             // fallback to original behavior: first argument is bucket, optional second is table
