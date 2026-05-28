@@ -41,3 +41,36 @@ pub async fn list_s3_buckets(client: &S3Client) -> Result<usize, aws_sdk_s3::Err
     }
     Ok(buckets.len())
 }
+
+/// Create an S3 bucket. If `region` is `None` the client's configured region is used.
+/// For most regions, calling CreateBucket without a `CreateBucketConfiguration`
+/// is sufficient; some regions require a LocationConstraint. Pass `Some(region)`
+/// to include a LocationConstraint explicitly.
+pub async fn create_s3_bucket(
+    client: &S3Client,
+    bucket: &str,
+    region: Option<&str>,
+) -> Result<(), aws_sdk_s3::Error> {
+    let mut req = client.create_bucket().bucket(bucket);
+    if let Some(r) = region {
+        if !r.is_empty() {
+            // set LocationConstraint when provided (best-effort)
+            req = req.create_bucket_configuration(
+                aws_sdk_s3::types::CreateBucketConfiguration::builder()
+                    .location_constraint(aws_sdk_s3::types::BucketLocationConstraint::from(r))
+                    .build(),
+            );
+        }
+    }
+
+    req.send().await?;
+    println!(
+        "Created bucket '{}'{}",
+        bucket,
+        match region {
+            Some(r) => format!(" in region {}", r),
+            None => "".to_string(),
+        }
+    );
+    Ok(())
+}
