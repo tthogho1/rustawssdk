@@ -174,6 +174,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let region_arg = region.as_deref().or_else(|| config.region().map(|r| r.as_ref()));
             s3::create_s3_bucket(&s3_client, &bucket, region_arg).await?;
         }
+        "empty-bucket" => {
+            let bucket = args.next().expect("Usage: empty-bucket <bucket> [prefix]");
+            let prefix = args.next();
+            s3::empty_s3_bucket(&s3_client, &bucket, prefix.as_deref()).await?;
+            match prefix {
+                Some(p) => println!("Emptied bucket: {}/{}", bucket, p),
+                None => println!("Emptied bucket: {}", bucket),
+            }
+        }
         "describe-table" => {
             let table = args.next().expect("Usage: describe-table <table>");
             dynamodb::describe_table_schema(&ddb_client, &table).await?;
