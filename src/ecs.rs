@@ -1,5 +1,4 @@
 use aws_sdk_ecs::Client as EcsClient;
-use futures::StreamExt;
 
 pub async fn list_ecs_clusters(client: &EcsClient) -> Result<usize, aws_sdk_ecs::Error> {
     let mut paginator = client.list_clusters().into_paginator().send();

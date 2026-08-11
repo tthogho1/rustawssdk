@@ -1,5 +1,4 @@
 use aws_sdk_ecr::Client as EcrClient;
-use futures::StreamExt;
 
 pub async fn list_ecr_repositories(client: &EcrClient) -> Result<usize, aws_sdk_ecr::Error> {
     let mut paginator = client.describe_repositories().into_paginator().send();
