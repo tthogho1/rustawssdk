@@ -109,6 +109,7 @@ pub async fn show_security_group_ingress(
 
 /// Authorize a simple IPv4 ingress rule on the given security group.
 /// `protocol` examples: "tcp", "udp", "-1" (all).
+#[allow(dead_code)]
 pub async fn authorize_ingress(
     client: &Ec2Client,
     group_id: &str,
