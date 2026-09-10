@@ -1,6 +1,6 @@
 use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::types::{Delete, ObjectIdentifier};
-use aws_sdk_s3::primitives::ByteStream;
+use aws_sdk_s3::primitives::{ByteStream, DateTimeFormat};
 use std::path::Path;
 
 pub async fn list_s3_objects(client: &S3Client, bucket: &str) -> Result<usize, aws_sdk_s3::Error> {
@@ -28,15 +28,33 @@ pub async fn list_s3_objects(client: &S3Client, bucket: &str) -> Result<usize, a
     Ok(count)
 }
 
-/// Count objects under a bucket and optional prefix.
+/// Render a byte count as a human-readable size (binary units).
+pub fn format_bytes(bytes: i64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    if bytes < 1024 {
+        return format!("{} B", bytes);
+    }
+    let mut value = bytes as f64;
+    let mut unit = 0usize;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    format!("{:.2} {}", value, UNITS[unit])
+}
+
+/// Count objects under a bucket and optional prefix, and sum their sizes.
+///
+/// Returns `(object_count, total_bytes)`. The sizes come from the same
+/// ListObjectsV2 pages used for the count, so this costs no extra API calls.
 ///
 /// Example:
-/// let n = count_objects_in_prefix(&client, "my-bucket", Some("path/to/")).await?;
+/// let (n, bytes) = count_objects_in_prefix(&client, "my-bucket", Some("path/to/")).await?;
 pub async fn count_objects_in_prefix(
     client: &S3Client,
     bucket: &str,
     prefix: Option<&str>,
-) -> Result<usize, aws_sdk_s3::Error> {
+) -> Result<(usize, i64), aws_sdk_s3::Error> {
     let mut req = client.list_objects_v2().bucket(bucket);
     if let Some(p) = prefix {
         if !p.is_empty() {
@@ -46,15 +64,17 @@ pub async fn count_objects_in_prefix(
 
     let mut paginator = req.into_paginator().send();
     let mut count: usize = 0;
+    let mut total_bytes: i64 = 0;
     while let Some(page_result) = paginator.next().await {
         let page = page_result?;
         let contents = page.contents();
         if !contents.is_empty() {
             count += contents.len();
+            total_bytes += contents.iter().filter_map(|o| o.size()).sum::<i64>();
         }
     }
 
-    Ok(count)
+    Ok((count, total_bytes))
 }
 
 pub async fn list_s3_buckets(client: &S3Client) -> Result<usize, aws_sdk_s3::Error> {
@@ -206,5 +226,66 @@ pub async fn empty_s3_bucket(
     }
 
     println!("Emptied bucket '{}'", bucket);
+    Ok(())
+}
+
+/// Print metadata for a single object (HeadObject): size, content type,
+/// last-modified, ETag, storage class, encryption, version id and any
+/// user-defined metadata.
+///
+/// Example:
+/// head_s3_object(&client, "audio4input", "NQsldKLWj1M/NQsldKLWj1M.mp4").await?;
+pub async fn head_s3_object(
+    client: &S3Client,
+    bucket: &str,
+    key: &str,
+) -> Result<(), aws_sdk_s3::Error> {
+    let resp = client
+        .head_object()
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await?;
+
+    println!("Bucket:         {}", bucket);
+    println!("Key:            {}", key);
+    match resp.content_length() {
+        Some(len) => println!("Size:           {} ({})", len, format_bytes(len)),
+        None => println!("Size:           (unknown)"),
+    }
+    println!("ContentType:    {}", resp.content_type().unwrap_or("(none)"));
+    if let Some(enc) = resp.content_encoding() {
+        println!("ContentEncoding:{}", enc);
+    }
+    match resp.last_modified() {
+        Some(dt) => println!(
+            "LastModified:   {}",
+            dt.fmt(DateTimeFormat::DateTime)
+                .unwrap_or_else(|_| format!("{:?}", dt))
+        ),
+        None => println!("LastModified:   (unknown)"),
+    }
+    println!("ETag:           {}", resp.e_tag().unwrap_or("(none)"));
+    println!(
+        "StorageClass:   {}",
+        resp.storage_class().map(|s| s.as_str()).unwrap_or("STANDARD")
+    );
+    if let Some(sse) = resp.server_side_encryption() {
+        println!("Encryption:     {}", sse.as_str());
+    }
+    if let Some(v) = resp.version_id() {
+        println!("VersionId:      {}", v);
+    }
+    if let Some(md) = resp.metadata() {
+        if !md.is_empty() {
+            println!("Metadata:");
+            let mut keys: Vec<&String> = md.keys().collect();
+            keys.sort();
+            for k in keys {
+                println!("  {}: {}", k, md[k]);
+            }
+        }
+    }
+
     Ok(())
 }

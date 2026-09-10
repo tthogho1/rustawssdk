@@ -38,6 +38,9 @@ rustawssdk <command> [args]
 
 - `list-buckets` — list all S3 buckets
 - `list-s3 <bucket>` — list objects in an S3 bucket
+- `ls-s3 <bucket> [prefix]` — list one "folder" level (sub-folders and files) like `aws s3 ls`; shows the first 1000 entries
+- `count-s3 <bucket> [prefix]` — count objects under a bucket/prefix and report their total size
+- `info-s3 <bucket> <key>` — show object metadata (size, content type, last-modified, ETag, storage class, user metadata)
 - `create-bucket <bucket> [region]` — create an S3 bucket
 
 ### DynamoDB
@@ -114,6 +117,13 @@ cargo run -- set-attr YoutubeList transcribed 1 video_id=abcd1234
 # list S3 buckets
 cargo run -- list-buckets
 
+# count objects under a prefix and see how much they take up
+cargo run -- count-s3 audio4input NQsldKLWj1M/
+# -> Total: 3 object(s), 51380224 bytes (49.00 MiB)
+
+# inspect a single object
+cargo run -- info-s3 audio4input NQsldKLWj1M/NQsldKLWj1M.mp4
+
 # delete a single IAM user (destructive)
 cargo run -- delete-user alice
 
@@ -129,6 +139,31 @@ cargo run -- list-permission-sets arn:aws:sso:::instance/ssoins-xxxxxxxxxx
 # list all users in an Identity Store
 cargo run -- list-identity-store-users d-xxxxxxxxxx
 ```
+
+## S3 Explorer (desktop GUI)
+
+`s3-explorer/` is a [Tauri v2](https://tauri.app) desktop app for browsing S3 like a file
+explorer: bucket list → folders → files, with back/forward/up navigation, a breadcrumb
+path bar, sortable columns, a name filter, and "Load more" paging (1000 entries per page).
+It is read-only for now.
+
+The Rust side is a thin wrapper around the `rustawssdk::explorer` library
+(`src/explorer.rs`), which the `ls-s3` CLI command also uses. The UI is plain
+HTML/CSS/JS in `s3-explorer/ui/`, so no npm build step is required.
+
+```bash
+# run the GUI (the repo root is a Cargo workspace; plain `cargo build` builds only the CLI)
+AWS_PROFILE=<profile> cargo run -p s3-explorer
+
+# package a .app/.dmg (macOS) or .msi/.exe (Windows); needs `cargo install tauri-cli --version "^2"`
+cd s3-explorer && cargo tauri build
+```
+
+- Credentials come from the default provider chain, like the CLI. A GUI launched from
+  Finder/Explorer does not see your shell's `AWS_REGION`, so the app falls back to
+  `us-east-1` for ListBuckets; each bucket is then accessed through a client for its own region.
+- If your credentials lack `s3:ListAllMyBuckets`, type `s3://bucket/path` into the
+  "Open" box in the sidebar to open a bucket or folder directly.
 
 ## AWS credentials & region
 

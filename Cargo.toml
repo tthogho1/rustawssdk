@@ -18,3 +18,9 @@ aws-sdk-ssoadmin = "1"
 aws-sdk-identitystore = "1"
 async-recursion = "1"
 futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+
+# The root package stays the default build target; the GUI shares this
+# workspace so the AWS SDK crates are compiled once into ./target.
+[workspace]
+members = ["s3-explorer/src-tauri"]

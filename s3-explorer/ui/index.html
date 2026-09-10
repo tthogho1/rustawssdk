@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>S3 Explorer</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="main.js"></script>
+  </head>
+  <body>
+    <div class="app">
+      <header class="toolbar">
+        <div class="nav-buttons">
+          <button id="btn-back" class="icon-btn" title="Back (Alt+←)" disabled>
+            <svg viewBox="0 0 16 16"><path d="M10 3 5 8l5 5" /></svg>
+          </button>
+          <button id="btn-forward" class="icon-btn" title="Forward (Alt+→)" disabled>
+            <svg viewBox="0 0 16 16"><path d="m6 3 5 5-5 5" /></svg>
+          </button>
+          <button id="btn-up" class="icon-btn" title="Up one level (Alt+↑)" disabled>
+            <svg viewBox="0 0 16 16"><path d="M8 13V3M3.5 7.5 8 3l4.5 4.5" /></svg>
+          </button>
+          <button id="btn-refresh" class="icon-btn" title="Refresh (F5)">
+            <svg viewBox="0 0 16 16"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5V5h-2.5" /></svg>
+          </button>
+        </div>
+        <nav id="breadcrumb" class="breadcrumb" aria-label="Location"></nav>
+        <input id="filter" class="search" type="search" placeholder="Filter this folder" spellcheck="false" />
+      </header>
+
+      <aside class="sidebar">
+        <form id="open-form" class="open-form">
+          <input
+            id="open-path"
+            class="search"
+            type="text"
+            placeholder="Open s3://bucket/path"
+            title="Open a bucket or folder directly (works even without s3:ListAllMyBuckets)"
+            spellcheck="false"
+          />
+        </form>
+        <div class="sidebar-head">
+          <span class="section-title">Buckets</span>
+          <span id="bucket-count" class="muted"></span>
+        </div>
+        <input id="bucket-filter" class="search" type="search" placeholder="Filter buckets" spellcheck="false" />
+        <ul id="bucket-list" class="bucket-list"></ul>
+      </aside>
+
+      <main class="content" id="content" tabindex="0">
+        <div id="error" class="error" role="alert" hidden></div>
+        <table id="listing" class="listing" hidden>
+          <colgroup>
+            <col />
+            <col class="col-size" />
+            <col class="col-date" />
+            <col class="col-class" />
+          </colgroup>
+          <thead>
+            <tr>
+              <th data-sort="name">Name</th>
+              <th data-sort="size" class="num">Size</th>
+              <th data-sort="modified">Last modified</th>
+              <th data-sort="class">Storage class</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+        <div id="empty" class="empty" hidden></div>
+      </main>
+
+      <footer class="statusbar">
+        <span id="status"></span>
+        <button id="btn-more" class="text-btn" hidden>Load more</button>
+      </footer>
+    </div>
+  </body>
+</html>
