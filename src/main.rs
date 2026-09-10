@@ -35,7 +35,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 Commands:
                     list-buckets
                     list-s3 <bucket>
-                    count-s3 <bucket> [prefix]
+                    count-s3 <bucket> [prefix]      # object count + total size
+                    info-s3 <bucket> <key>         # object metadata (HeadObject)
                     delete-s3-object <bucket> <key>
                     put-s3-object <bucket> <local-file-path> [key]   # key omitted -> uses local file name
                     describe-table <table>
@@ -173,8 +174,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         "count-s3" => {
             let bucket = args.next().expect("Usage: count-s3 <bucket> [prefix]");
             let prefix = args.next();
-            let count = s3::count_objects_in_prefix(&s3_client, &bucket, prefix.as_deref()).await?;
-            println!("\nTotal: {} object(s)", count);
+            let (count, total_bytes) =
+                s3::count_objects_in_prefix(&s3_client, &bucket, prefix.as_deref()).await?;
+            println!(
+                "\nTotal: {} object(s), {} bytes ({})",
+                count,
+                total_bytes,
+                s3::format_bytes(total_bytes)
+            );
+        }
+        "info-s3" => {
+            let bucket = args.next().expect("Usage: info-s3 <bucket> <key>");
+            let key = args.next().expect("Usage: info-s3 <bucket> <key>");
+            s3::head_s3_object(&s3_client, &bucket, &key).await?;
         }
         "delete-s3-object" => {
             let bucket = args.next().expect("Usage: delete-s3-object <bucket> <key>");

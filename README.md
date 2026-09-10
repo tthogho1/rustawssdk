@@ -38,6 +38,8 @@ rustawssdk <command> [args]
 
 - `list-buckets` — list all S3 buckets
 - `list-s3 <bucket>` — list objects in an S3 bucket
+- `count-s3 <bucket> [prefix]` — count objects under a bucket/prefix and report their total size
+- `info-s3 <bucket> <key>` — show object metadata (size, content type, last-modified, ETag, storage class, user metadata)
 - `create-bucket <bucket> [region]` — create an S3 bucket
 
 ### DynamoDB
@@ -113,6 +115,13 @@ cargo run -- set-attr YoutubeList transcribed 1 video_id=abcd1234
 
 # list S3 buckets
 cargo run -- list-buckets
+
+# count objects under a prefix and see how much they take up
+cargo run -- count-s3 audio4input NQsldKLWj1M/
+# -> Total: 3 object(s), 51380224 bytes (49.00 MiB)
+
+# inspect a single object
+cargo run -- info-s3 audio4input NQsldKLWj1M/NQsldKLWj1M.mp4
 
 # delete a single IAM user (destructive)
 cargo run -- delete-user alice
