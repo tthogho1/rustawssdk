@@ -24,6 +24,7 @@ mod identitycenter;
 mod ou;
 
 use aws_sdk_dynamodb::types::AttributeValue;
+use rustawssdk::explorer::Explorer;
 use std::collections::HashMap;
 
 
@@ -35,6 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 Commands:
                     list-buckets
                     list-s3 <bucket>
+                    ls-s3 <bucket> [prefix]        # one folder level: sub-folders + files (first 1000 entries)
                     count-s3 <bucket> [prefix]      # object count + total size
                     info-s3 <bucket> <key>         # object metadata (HeadObject)
                     delete-s3-object <bucket> <key>
@@ -170,6 +172,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             let bucket = args.next().expect("Usage: list-s3 <bucket>");
             let count = s3::list_s3_objects(&s3_client, &bucket).await?;
             println!("\nTotal: {} object(s)", count);
+        }
+        "ls-s3" => {
+            let bucket = args.next().expect("Usage: ls-s3 <bucket> [prefix]");
+            let prefix = args.next().unwrap_or_default();
+            let explorer = Explorer::new(&config);
+            let page = explorer.list_dir(&bucket, &prefix, None).await?;
+            for f in &page.folders {
+                println!("{:>12}  {:<25}  {}/", "PRE", "", f.name);
+            }
+            for f in &page.files {
+                println!(
+                    "{:>12}  {:<25}  {}",
+                    s3::format_bytes(f.size),
+                    f.last_modified.as_deref().unwrap_or("-"),
+                    f.name
+                );
+            }
+            println!(
+                "\nTotal: {} folder(s), {} file(s){}",
+                page.folders.len(),
+                page.files.len(),
+                if page.next_token.is_some() { " (more not shown)" } else { "" }
+            );
         }
         "count-s3" => {
             let bucket = args.next().expect("Usage: count-s3 <bucket> [prefix]");
